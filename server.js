@@ -6,7 +6,7 @@ const cors = require("cors");
 const app = express();
 app.use(cors());
 
-const API_KEY = "AIzaSyDYja8cfnDpqCY27CuCP23Nyr-S-r1aIpc";
+const API_KEY = process.env.API_KEY;
 
 function extractIdentifier(url) {
   try {
