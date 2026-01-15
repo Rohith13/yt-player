@@ -6,7 +6,7 @@ const cors = require("cors");
 const app = express();
 app.use(cors());
 
-const API_KEY = process.env.API_KEY;
+const API_KEY = "AIzaSyDYja8cfnDpqCY27CuCP23Nyr-S-r1aIpc";
 
 function extractIdentifier(url) {
   try {
@@ -53,6 +53,21 @@ async function getUploadsPlaylist(channelId) {
   return res.data.items[0].contentDetails.relatedPlaylists.uploads;
 }
 
+function isShort(duration) {
+  // ISO 8601 format examples:
+  // PT45S, PT1M30S, PT3M, PT2M10S
+  const match = duration.match(/PT(?:(\d+)M)?(?:(\d+)S)?/);
+
+  const minutes = parseInt(match?.[1] || 0);
+  const seconds = parseInt(match?.[2] || 0);
+
+  const totalSeconds = minutes * 60 + seconds;
+
+  // YouTube Shorts limit (current): up to 3 minutes
+  return totalSeconds <= 180;
+}
+
+
 async function getAllVideos(playlistId) {
   let videos = [];
   let nextPageToken = null;
@@ -81,25 +96,33 @@ async function getAllVideos(playlistId) {
 
     const details = await axios.get("https://www.googleapis.com/youtube/v3/videos", {
       params: {
-        part: "status",
+        part: "status,contentDetails",
         id: ids,
         key: API_KEY
       }
     });
 
     const embeddableMap = {};
-    details.data.items.forEach(v => {
-      embeddableMap[v.id] = v.status.embeddable;
-    });
+const durationMap = {};
+
+details.data.items.forEach(v => {
+  embeddableMap[v.id] = v.status.embeddable;
+  durationMap[v.id] = v.contentDetails.duration;
+});
+
 
     batch.forEach(v => {
       const id = v.snippet.resourceId.videoId;
       if (embeddableMap[id]) {
-        result.push({
-          id,
-          title: v.snippet.title,
-          publishedAt: v.snippet.publishedAt
-        });
+        const duration = durationMap[id];
+
+result.push({
+  id,
+  title: v.snippet.title,
+  publishedAt: v.snippet.publishedAt,
+  type: isShort(duration) ? "short" : "video"
+});
+
       }
     });
   }
@@ -111,8 +134,6 @@ async function getAllVideos(playlistId) {
 
 app.get("/api/videos", async (req, res) => {
   try {
-    res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
-    res.set("Pragma", "no-cache");
     const url = req.query.url;
     const identifier = extractIdentifier(url);
 
@@ -122,7 +143,17 @@ app.get("/api/videos", async (req, res) => {
     const playlistId = await getUploadsPlaylist(channelId);
 
     let videos = await getAllVideos(playlistId);
-    videos.sort((a, b) => new Date(a.publishedAt) - new Date(b.publishedAt));
+
+const type = req.query.type || "all";
+
+if (type === "shorts") {
+  videos = videos.filter(v => v.type === "short");
+} else if (type === "videos") {
+  videos = videos.filter(v => v.type === "video");
+}
+
+videos.sort((a, b) => new Date(a.publishedAt) - new Date(b.publishedAt));
+
 
     res.json(videos);
   } catch (err) {
